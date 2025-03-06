@@ -57,8 +57,12 @@ def build_CNN(input_shape, loss,
     # --------------------------------------------  
 
     # Setup optimizer, depending on input parameter string
-    ???
-    
+    if optimizer == "sgd":
+        optimizer = SGD(learning_rate=learning_rate)
+    elif optimizer == "adam":
+        optimizer = Adam(learning_rate=learning_rate)
+    else:
+        raise ValueError("Invalid optimizer string provided.")
     # ============================================
     
     # Setup a sequential model
@@ -67,23 +71,28 @@ def build_CNN(input_shape, loss,
     # --------------------------------------------
     # === Your code here =========================
     # --------------------------------------------  
-    
+    model.add(Input(shape=input_shape))
     # Add convolutional layers
-    for i in range(???):
-        ???
-    
+    for i in range(n_conv_layers):
+        model.add(Conv2D(2**i * n_filters, (3, 3), activation=act_fun, padding='same'))
+        model.add(BatchNormalization())
+        model.add(MaxPooling2D((2, 2)))
     # Flatten the output of the convolutional layers
-    ???
+    model.add(Flatten())
     
     # Add dense layers
-    for i in range(???):
-        ???
+    for i in range(n_dense_layers):
+        model.add(Dense(n_nodes, activation="relu"))
+        model.add(BatchNormalization())
+        if use_dropout:
+            model.add(Dropout(0.5))
+
     
     # Add output layer
-    ???
+    model.add(Dense(10, activation='softmax'))
     
     # Compile the model
-    ???
+    model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'])
 
     # ============================================
 
