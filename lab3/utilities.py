@@ -58,7 +58,7 @@ def build_CNN(input_shape, loss,
 
     # Setup optimizer, depending on input parameter string
     if optimizer == "sgd":
-        optimizer = SGD(learning_rate=learning_rate)
+        optimizer = SGD(learning_rate=learning_rate, momentum=0.9)
     elif optimizer == "adam":
         optimizer = Adam(learning_rate=learning_rate)
     else:
@@ -74,7 +74,7 @@ def build_CNN(input_shape, loss,
     model.add(Input(shape=input_shape))
     # Add convolutional layers
     for i in range(n_conv_layers):
-        model.add(Conv2D(2**i * n_filters, (3, 3), activation=act_fun, padding='same'))
+        model.add(Conv2D(2**i * n_filters, (3, 3), activation=act_fun, padding='same', kernel_initializer='he_uniform'))
         model.add(BatchNormalization())
         model.add(MaxPooling2D((2, 2)))
     # Flatten the output of the convolutional layers
