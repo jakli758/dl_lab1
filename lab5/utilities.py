@@ -10,9 +10,11 @@ from tf_keras.layers import (
     LayerNormalization,
     Embedding,
 )
+from tf_keras.models import Sequential
 
 import matplotlib.pyplot as plt
 import numpy as np
+from math import sqrt
 
 
 # seed for reproducibility
@@ -45,18 +47,17 @@ def scaled_dot_product_attention(q, k, v):
     # --------------------------------------------
 
     # Compute the dot product between queries and keys.
-    matmul_qk = ...  # Shape: (batch_size, num_heads, seq_len_q, seq_len_k)
-
+    matmul_qk = tf.matmul(q,k,transpose_b=True)  # Shape: (batch_size, num_heads, seq_len_q, seq_len_k)
+    
     # Scale the dot products by the square root of the depth.
-    dk = ...
-    scaled_attention_logits = ...
+    dk = q.shape[-1]
+    scaled_attention_logits = matmul_qk / sqrt(dk)
 
     # Apply the softmax function to obtain the attention weights (use tf.nn.softmax).
-    attention_weights = ...  # Shape: (batch_size, num_heads, seq_len_q, seq_len_k)
+    attention_weights = tf.nn.softmax(scaled_attention_logits)  # Shape: (batch_size, num_heads, seq_len_q, seq_len_k)
 
     # Compute the weighted sum of the values.
-    output = ...  # Shape: (batch_size, num_heads, seq_len_q, depth)
-
+    output =  tf.matmul(attention_weights, v) # Shape: (batch_size, num_heads, seq_len_q, depth)
     # ============================================
 
     return output, attention_weights
@@ -80,24 +81,25 @@ class MultiHeadAttention(layers.Layer):
 
         # define initializer function
         initializer = tf.keras.initializers.GlorotUniform()
-
+        
         # --------------------------------------------
         # === Your code here =========================
         # --------------------------------------------
 
         # Initialize the weights for the projection layers. Note that here we are combining all the heads together.
         # Remember to set the trainable parameter to True
-        self.WQ = tf.Variable(...)  # of shape (n_heads, proj_size, dq=dk)
-        self.WK = tf.Variable(...)  # of shape (n_heads, proj_size, dk=dq)
-        self.WV = tf.Variable(...)  # of shape (n_heads, proj_size, dv)
-        self.WO = tf.Variable(...)  # of shape (n_heads*proj_size, proj_size)
-
+        self.WQ = tf.Variable(initializer(shape=(n_heads, proj_size, dk)), trainable=True)  # of shape (n_heads, proj_size, dq=dk)
+        self.WK = tf.Variable(initializer(shape=(n_heads, proj_size, dk)), trainable=True)  # of shape (n_heads, proj_size, dk=dq)
+        self.WV = tf.Variable(initializer(shape=(n_heads, proj_size, dv)), trainable=True)  # of shape (n_heads, proj_size, dv)
+        self.WO = tf.Variable(initializer(shape=(n_heads * proj_size, proj_size)), trainable=True)  # of shape (n_heads*proj_size, proj_size)
+        self.n_heads = n_heads
+        self.proj_size = proj_size
         # ============================================
 
-        # print(f"WQ shape: {self.WQ.shape}")
-        # print(f"WK shape: {self.WK.shape}")
-        # print(f"WV shape: {self.WV.shape}")
-        # print(f"WO shape: {self.WO.shape}")
+        #print(f"WQ shape: {self.WQ.shape}")
+        #print(f"WK shape: {self.WK.shape}")
+        #print(f"WV shape: {self.WV.shape}")
+        #print(f"WO shape: {self.WO.shape}")
 
         self.return_attention_weights = return_attention_weights
 
@@ -124,33 +126,38 @@ class MultiHeadAttention(layers.Layer):
 
         # Projecting Q,K,V to Qh, Kh, Vh. The H projection are stacked on the along the second-to-last axis.
         # NOTE : here one needs to use tf.experimental.numpy.dot instead of tf.matmul as the former supports broadcasting.
-
+        print(Q.shape)
+        print(self.WQ.shape)
+        print(tf.transpose(self.WQ,perm=[0,2,1]).shape)
         Qh = tf.experimental.numpy.dot(
-            ...
+            Q, tf.transpose(self.WQ,perm=[0,2,1])
         )  # of shape (batch_size, number_of_Q, n_heads, dk=dq)
         Kh = tf.experimental.numpy.dot(
-            ...
+            K, tf.transpose(self.WK,perm=[0,2,1])
         )  # of shape (batch_size, number_of_K, n_heads, dk=dq)
         Vh = tf.experimental.numpy.dot(
-            ...
+            V, tf.transpose(self.WV,perm=[0,2,1])
         )  # of shape (batch_size, number_of_V, n_heads, dv)
-
+        #batch_size, num_heads, seq_len_q, depth
         # Bring the number of queries, keys, and their dimension to the last two axes so that we can use the scaled_dot_product_attention function
-        Qh = tf.transpose(...)  # of shape (batch_size, H, number_of_Q, proj_size)
-        Kh = tf.transpose(...)  # of shape (batch_size, H, number_of_K, proj_size)
-        Vh = tf.transpose(...)  # of shape (batch_size, H, number_of_V, proj_size)
+        Qh = tf.transpose(Qh, perm=[0,2,1,3])  # of shape (batch_size, H, number_of_Q, proj_size)
+        Kh = tf.transpose(Kh, perm=[0,2,1,3])  # of shape (batch_size, H, number_of_K, proj_size)
+        Vh = tf.transpose(Vh, perm=[0,2,1,3])  # of shape (batch_size, H, number_of_V, proj_size)
 
         # Computing the dot-product attention
         attention_pooling_h, attention_weights_h = scaled_dot_product_attention(
-            ...
+            Qh, Kh, Vh
         )  # of shape (batch_size, n_heads, number_of_Q, proj_size)
 
         # Flattening (concatenate) across the number of heads.
-        A = tf.reshape(...)  # of shape (batch_size, number_of_Q, n_heads*proj_dim)
+        batch_size = tf.shape(attention_pooling_h)[0]
+        number_of_Q = tf.shape(attention_pooling_h)[2]
+        output_dim = self.n_heads * self.proj_size
+        A = tf.reshape(attention_pooling_h, shape=(batch_size, number_of_Q, output_dim))  # of shape (batch_size, number_of_Q, n_heads*proj_dim)
 
         # Projecting the concatenated heads to the output space
         A = tf.experimental.numpy.dot(
-            ...
+            A, self.WO
         )  # of shape (batch_size, number_of_Q, proj_dim)
 
         # ============================================
@@ -179,9 +186,9 @@ def mlp(x, hidden_units, dropout_rate):
     # --------------------------------------------
 
     for units in hidden_units:
-        ...
-        ...
-
+        x = layers.Dense(units, activation='gelu')(x)
+        x = layers.Dropout(dropout_rate)(x)
+    
     # ============================================
     return x
 
@@ -217,7 +224,7 @@ def transformerBlock(x, num_heads, projection_dim, transformer_units, dropout_ra
     x1 = ...
 
     # apply the MLP
-    mlp_output = mlp(...)
+    mlp_output = mlp(hidden_units=[projection_dim, 2048, projection_dim])
 
     # apply dropout
     mlp_output = ...
