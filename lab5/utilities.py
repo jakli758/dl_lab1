@@ -126,17 +126,18 @@ class MultiHeadAttention(layers.Layer):
 
         # Projecting Q,K,V to Qh, Kh, Vh. The H projection are stacked on the along the second-to-last axis.
         # NOTE : here one needs to use tf.experimental.numpy.dot instead of tf.matmul as the former supports broadcasting.
-        print(Q.shape)
-        print(self.WQ.shape)
-        print(tf.transpose(self.WQ,perm=[0,2,1]).shape)
         Qh = tf.experimental.numpy.dot(
-            Q, tf.transpose(self.WQ,perm=[0,2,1])
+
+            #Q, tf.transpose(self.WQ,perm=[0,2,1])
+            Q, self.WQ
         )  # of shape (batch_size, number_of_Q, n_heads, dk=dq)
         Kh = tf.experimental.numpy.dot(
-            K, tf.transpose(self.WK,perm=[0,2,1])
+            #K, tf.transpose(self.WK,perm=[0,2,1])
+            K, self.WK
         )  # of shape (batch_size, number_of_K, n_heads, dk=dq)
         Vh = tf.experimental.numpy.dot(
-            V, tf.transpose(self.WV,perm=[0,2,1])
+            #V, tf.transpose(self.WV,perm=[0,2,1])
+            V, self.WV
         )  # of shape (batch_size, number_of_V, n_heads, dv)
         #batch_size, num_heads, seq_len_q, depth
         # Bring the number of queries, keys, and their dimension to the last two axes so that we can use the scaled_dot_product_attention function
@@ -153,6 +154,18 @@ class MultiHeadAttention(layers.Layer):
         batch_size = tf.shape(attention_pooling_h)[0]
         number_of_Q = tf.shape(attention_pooling_h)[2]
         output_dim = self.n_heads * self.proj_size
+
+        #print(f"batch_size: {batch_size}, number_of_Q: {number_of_Q}, output_dim: {output_dim}, attention_pooling_h: {attention_pooling_h.shape}")
+        print(f"WQ: {self.WQ.shape}")
+        print(f"WK: {self.WK.shape}")
+        print(f"WV: {self.WV.shape}")
+        print(f"WO: {self.WO.shape}")
+        print(f"Qh: {Qh.shape}")
+        print(f"Kh: {Kh.shape}")
+        print(f"Vh: {Vh.shape}")
+        print(f"attention_pooling_h: {attention_pooling_h.shape}")
+        
+
         A = tf.reshape(attention_pooling_h, shape=(batch_size, number_of_Q, output_dim))  # of shape (batch_size, number_of_Q, n_heads*proj_dim)
 
         # Projecting the concatenated heads to the output space
@@ -161,7 +174,7 @@ class MultiHeadAttention(layers.Layer):
         )  # of shape (batch_size, number_of_Q, proj_dim)
 
         # ============================================
-
+        print(f"shape of A: {A.shape}")
         if self.return_attention_weights:
             return A, attention_weights_h
         else:
@@ -186,7 +199,7 @@ def mlp(x, hidden_units, dropout_rate):
     # --------------------------------------------
 
     for units in hidden_units:
-        x = layers.Dense(units, activation='gelu')(x)
+        x = layers.Dense(units)(x)
         x = layers.Dropout(dropout_rate)(x)
     
     # ============================================
@@ -213,24 +226,27 @@ def transformerBlock(x, num_heads, projection_dim, transformer_units, dropout_ra
     # --------------------------------------------
 
     # apply the multi-head attention
-    attention_output = MultiHeadAttention(...)(
-        ...
-    )  # NOTE: here we are using the MultiHeadAttention layer to compute the SELF ATTENTION
+    # n_heads, proj_size, dk, dv, return_attention_weights=False
 
+    dk= projection_dim // num_heads
+    attention_output = MultiHeadAttention(num_heads, projection_dim, dk=dk, dv=dk, return_attention_weights=True)(
+        Q=x, K=x, V=x
+    )  # NOTE: here we are using the MultiHeadAttention layer to compute the SELF ATTENTION
+    
     # apply dropout
-    attention_output = ...
+    attention_output = Dropout(dropout_rate)(attention_output)
 
     # apply the skip connection and layer normalization
-    x1 = ...
+    x1 = LayerNormalization(epsilon=1e-6)(x + attention_output)
 
     # apply the MLP
-    mlp_output = mlp(hidden_units=[projection_dim, 2048, projection_dim])
+    mlp_output = mlp(x1, hidden_units=[projection_dim, 2048, projection_dim], dropout_rate=dropout_rate)
 
     # apply dropout
-    mlp_output = ...
+    mlp_output = Dropout(dropout_rate)(mlp_output)
 
     # apply the skip connection and layer normalization
-    x2 = ...
+    x2 = LayerNormalization(epsilon=1e-6)(x1 + mlp_output)
 
     # ============================================
     return x2
@@ -646,7 +662,7 @@ def test_TransformerBlock(seed=42, dropout_rate=0.1):
     # Define the expected outputs
     expected_mean_output = 0.0
     expected_std_output = 1
-
+    
     # Get output and attention weights from the MultiHeadAttention layer
     output = transformerBlock(X, n_heads, proj_size, transformer_units)
 
