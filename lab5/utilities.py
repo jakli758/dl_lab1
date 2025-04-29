@@ -10,6 +10,7 @@ from tf_keras.layers import (
     LayerNormalization,
     Embedding,
 )
+
 from tf_keras.models import Sequential
 
 import matplotlib.pyplot as plt
@@ -48,18 +49,16 @@ def scaled_dot_product_attention(q, k, v):
 
     # Compute the dot product between queries and keys.
     matmul_qk = tf.matmul(q,k,transpose_b=True)  # Shape: (batch_size, num_heads, seq_len_q, seq_len_k)
-    
     # Scale the dot products by the square root of the depth.
     dk = q.shape[-1]
     scaled_attention_logits = matmul_qk / sqrt(dk)
 
     # Apply the softmax function to obtain the attention weights (use tf.nn.softmax).
-    attention_weights = tf.nn.softmax(scaled_attention_logits)  # Shape: (batch_size, num_heads, seq_len_q, seq_len_k)
+    attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)  # Shape: (batch_size, num_heads, seq_len_q, seq_len_k)
 
     # Compute the weighted sum of the values.
     output =  tf.matmul(attention_weights, v) # Shape: (batch_size, num_heads, seq_len_q, depth)
     # ============================================
-
     return output, attention_weights
 
 
@@ -88,9 +87,9 @@ class MultiHeadAttention(layers.Layer):
 
         # Initialize the weights for the projection layers. Note that here we are combining all the heads together.
         # Remember to set the trainable parameter to True
-        self.WQ = tf.Variable(initializer(shape=(n_heads, proj_size, dk)), trainable=True)  # of shape (n_heads, proj_size, dq=dk)
-        self.WK = tf.Variable(initializer(shape=(n_heads, proj_size, dk)), trainable=True)  # of shape (n_heads, proj_size, dk=dq)
-        self.WV = tf.Variable(initializer(shape=(n_heads, proj_size, dv)), trainable=True)  # of shape (n_heads, proj_size, dv)
+        self.WQ = tf.Variable(initializer(shape=(n_heads, dk, proj_size)), trainable=True)  # of shape (n_heads, proj_size, dq=dk)
+        self.WK = tf.Variable(initializer(shape=(n_heads,dk, proj_size)), trainable=True)  # of shape (n_heads, proj_size, dk=dq)
+        self.WV = tf.Variable(initializer(shape=(n_heads,dv, proj_size)), trainable=True)  # of shape (n_heads, proj_size, dv)
         self.WO = tf.Variable(initializer(shape=(n_heads * proj_size, proj_size)), trainable=True)  # of shape (n_heads*proj_size, proj_size)
         self.n_heads = n_heads
         self.proj_size = proj_size
@@ -123,7 +122,7 @@ class MultiHeadAttention(layers.Layer):
         # --------------------------------------------
         # === Your code here =========================
         # --------------------------------------------
-
+        
         # Projecting Q,K,V to Qh, Kh, Vh. The H projection are stacked on the along the second-to-last axis.
         # NOTE : here one needs to use tf.experimental.numpy.dot instead of tf.matmul as the former supports broadcasting.
         Qh = tf.experimental.numpy.dot(
@@ -154,16 +153,6 @@ class MultiHeadAttention(layers.Layer):
         batch_size = tf.shape(attention_pooling_h)[0]
         number_of_Q = tf.shape(attention_pooling_h)[2]
         output_dim = self.n_heads * self.proj_size
-
-        #print(f"batch_size: {batch_size}, number_of_Q: {number_of_Q}, output_dim: {output_dim}, attention_pooling_h: {attention_pooling_h.shape}")
-        print(f"WQ: {self.WQ.shape}")
-        print(f"WK: {self.WK.shape}")
-        print(f"WV: {self.WV.shape}")
-        print(f"WO: {self.WO.shape}")
-        print(f"Qh: {Qh.shape}")
-        print(f"Kh: {Kh.shape}")
-        print(f"Vh: {Vh.shape}")
-        print(f"attention_pooling_h: {attention_pooling_h.shape}")
         
 
         A = tf.reshape(attention_pooling_h, shape=(batch_size, number_of_Q, output_dim))  # of shape (batch_size, number_of_Q, n_heads*proj_dim)
@@ -174,7 +163,7 @@ class MultiHeadAttention(layers.Layer):
         )  # of shape (batch_size, number_of_Q, proj_dim)
 
         # ============================================
-        print(f"shape of A: {A.shape}")
+        
         if self.return_attention_weights:
             return A, attention_weights_h
         else:
@@ -228,8 +217,8 @@ def transformerBlock(x, num_heads, projection_dim, transformer_units, dropout_ra
     # apply the multi-head attention
     # n_heads, proj_size, dk, dv, return_attention_weights=False
 
-    dk= projection_dim // num_heads
-    attention_output = MultiHeadAttention(num_heads, projection_dim, dk=dk, dv=dk, return_attention_weights=True)(
+    dk= projection_dim #// num_heads
+    attention_output = MultiHeadAttention(num_heads, projection_dim, dk=dk, dv=dk, return_attention_weights=False)(
         Q=x, K=x, V=x
     )  # NOTE: here we are using the MultiHeadAttention layer to compute the SELF ATTENTION
     
@@ -240,7 +229,7 @@ def transformerBlock(x, num_heads, projection_dim, transformer_units, dropout_ra
     x1 = LayerNormalization(epsilon=1e-6)(x + attention_output)
 
     # apply the MLP
-    mlp_output = mlp(x1, hidden_units=[projection_dim, 2048, projection_dim], dropout_rate=dropout_rate)
+    mlp_output = mlp(x1, hidden_units=transformer_units, dropout_rate=dropout_rate)
 
     # apply dropout
     mlp_output = Dropout(dropout_rate)(mlp_output)
@@ -281,13 +270,15 @@ class PatchExtractor(Layer):
         batch_size = tf.shape(images)[0]
 
         # Use the tf.image.extract_patches function to extract patches from the images (see documentation for details: https://www.tensorflow.org/api_docs/python/tf/image/extract_patches)
-        patches = tf.image.extract_patches(...)
+        patches = tf.image.extract_patches(images=images, sizes=[1,self.patch_size,self.patch_size,1], strides=[1,self.patch_size,self.patch_size,1], rates=[1,self.patch_size,self.patch_size,1], padding="SAME")
 
         # get the dimensions of the patches tensor
-        patch_dims = ...
+        #patch_dims = patches.shape
+        patch_dims = tf.shape(patches)[-1]
+        num_patches = int((images.shape[1] / self.patch_size) **2 )
 
         # reshape the patches tensor to have the correct shape (batch_size, num_patches, patch_dims)
-        patches = tf.reshape(...)
+        patches = tf.reshape(patches, shape=[batch_size,num_patches,patch_dims])
 
         # ============================================
         return patches
@@ -317,32 +308,31 @@ class PatchEncoder(Layer):
             input_dim=num_patches + 1, output_dim=projection_dim
         )
 
-    def call(self, patch):
+    def call(self, patches):
         # --------------------------------------------
         # === Your code here =========================
         # --------------------------------------------
 
         # get the batch size
-        batch = ...
-
+        batch_size = tf.shape(patches)[0]
         # Reshape the class token embeddings (first make as many copies as the batch size and then reshape)
         # Use the tf.tile function to make as many copies of the class token as the batch size (see documentation for details: https://www.tensorflow.org/api_docs/python/tf/tile)
-        class_token = tf.tile(...)
-        class_token = tf.reshape(...)  # shape: (batch_size, 1, projection_dim)
-
+        class_token = tf.tile(input=self.class_token, multiples=[batch_size, 1])
+        class_token = tf.reshape(class_token, shape=[batch_size, 1, self.projection_dim])  # shape: (batch_size, 1, projection_dim)
+        
         # Project the patches using the projection layer
-        patches_embed = self.projection(...)
+        patches_embed = self.projection(patches)
         # patches_embed = patch
-
         # concatenate the class token to the patches
-        patches_embed = tf.concat(...)
-
+        patches_embed = tf.concat([patches_embed, class_token], axis=1)
         # calculate positional embeddings based on the number of patches (how many positions?)
-        positions = tf.range(...)
-        positions_embed = self.position_embedding(...)
-
+        positions = tf.range(start=0,limit=patches.shape[1]+ 1)
+        positions_embed = self.position_embedding(positions)
+        
         # add the positional embeddings to the patch embeddings
-        encoded = ...
+        positions_embed = tf.expand_dims(positions_embed, axis=0)  # shape (1, num_patches+1, projection_dim)
+
+        encoded = patches_embed + positions_embed
 
         # ============================================
 
@@ -387,20 +377,21 @@ def create_vit_classifier(
     # --------------------------------------------
 
     # Define input layer
-    inputs = ...
+    inputs = Input(shape=input_shape)
 
     # Augment data (if provided)
     if data_augmentation is not None:
         inputs = data_augmentation(inputs)
 
     # Create patches.
-    patches = ...
-
+    patch_extractor = PatchExtractor(patch_size=patch_size)
+    patches = patch_extractor(inputs)
     # Encode patches.
     ## Calculate the number of patches
-    num_patches = ...
+    num_patches = int((input_shape[1] / patch_size)**2)
     ## Encode the patches using the PatchEncoder layer
-    encoded_patches = ...
+    patch_encoder = PatchEncoder(num_patches=num_patches, projection_dim=embedding_proj_dim)
+    encoded_patches = patch_encoder(patches)
 
     # Create multiple layers of the Transformer block
     ## define mlp transformer units based on the msa_proj_dim
@@ -408,19 +399,21 @@ def create_vit_classifier(
         msa_proj_dim * 2,
         msa_proj_dim,
     ]  # Size of the transformer layers
-
     for _ in range(transformer_layers):
-        encoded_patches = ...
+        encoded_patches = transformerBlock(x=encoded_patches,
+                                           num_heads=num_heads, 
+                                           projection_dim=msa_proj_dim,
+                                           transformer_units=transformer_units,
+                                           dropout_rate=msa_dropout_rate)
 
     # Take out the class token (it is the last token)
-    representation = ...
-
+    representation = encoded_patches[:,3,:]
     # classification head applied to the class token
     ## Add mpl
-    features = ...
+    features = mlp(representation, hidden_units=mlp_classification_head_units, dropout_rate=mlp_classification_head_dropout_rate)
 
     ## features to the number of classes
-    logits = ...
+    logits = Dense(num_classes, activation="softmax")(features)
 
     # ============================================
 
